@@ -1,5 +1,7 @@
 import assemblyai as aai
 from app.config import settings
+from app.db.supabase import get_supabase
+from app.services.schema_service import apply_gemini_to_schema
 
 
 class AssemblyService:
@@ -51,6 +53,23 @@ class AssemblyService:
 
         # Parse directly from raw
         return AssemblyService.parse_transcript(raw)
+    
+
+    @staticmethod
+    def start_transcription(project_id: str, video_url: str):
+        supabase = get_supabase()
+
+        # Step 1: AssemblyAI → parsed
+        parsed = AssemblyService.transcribe_and_parse(video_url)
+
+        # Step 2: Store parsed in DB as intermediate
+        supabase.table("project").update({
+            "intermediate_transcript": parsed,   # optional column for debugging
+            "status": "transcribed"
+        }).eq("project_id", project_id).execute()
+
+        # Step 3: return parsed so another service can handoff
+        return parsed
 
 
 # now we need to return or call this to netram's function
