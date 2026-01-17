@@ -8,3 +8,6 @@ assemblyai
 google-generativeai
 yake
 ffmpeg-python
+
+
+
