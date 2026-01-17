@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+requests
+python-dotenv
+assemblyai
+google-generativeai
+yake
+ffmpeg-python
