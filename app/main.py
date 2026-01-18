@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routes import ingest_routes, refine_routes, export_routes, status_routes
+from app.routes import ingest_routes, refine_routes, export_routes, status_routes, job_routes
 
 
 app = FastAPI(title="AI Video Edit Backend")
@@ -13,6 +13,9 @@ app.add_middleware(
     allow_methods=["*"],  # Allow all methods (GET, POST, PUT, DELETE, etc.)
     allow_headers=["*"],  # Allow all headers
 )
+
+# Flow 1: Complete job processing with background tasks
+app.include_router(job_routes.router, prefix="/api/jobs", tags=["jobs"])
 
 # AI Chat Edit endpoint (Flow 2)
 app.include_router(refine_routes.router, prefix="/api/edit", tags=["edit"])

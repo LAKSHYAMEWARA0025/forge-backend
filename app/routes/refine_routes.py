@@ -19,7 +19,7 @@ class ChatEditRequest(BaseModel):
 
 class ChatEditResponse(BaseModel):
     project_id: str
-    status: str  # "success", "partial_success", "rejected"
+    status: str  # "success", "partial_success", "rejected", "info"
     message: str
     applied_edits: Optional[List[str]] = None
     rejected_edits: Optional[List[str]] = None
@@ -64,6 +64,15 @@ def chat_edit(req: ChatEditRequest):
         
         # Log LLM response for debugging
         print(f"LLM Response: {llm_response}")
+        
+        # Check if this is an informational query
+        if llm_response.get("is_informational", False):
+            return ChatEditResponse(
+                project_id=req.project_id,
+                status="info",
+                message=llm_response.get("message", "Here's the information you requested"),
+                updated_config=None
+            )
         
         # Check if LLM rejected the request
         if not llm_response.get("is_allowed", False):
