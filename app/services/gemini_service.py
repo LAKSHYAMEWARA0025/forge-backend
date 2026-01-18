@@ -1,28 +1,39 @@
+
 import os
 import json
-from google import genai
+import google.generativeai as genai
 from dotenv import load_dotenv
-
 
 load_dotenv()
 
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY")
-)
+MODEL_NAME = "models/gemini-2.5-flash"
 
-MODEL_NAME = "gemini-1.5-flash"
+model = genai.GenerativeModel(MODEL_NAME)
+
+
+def _clean_gemini_json(raw_text: str) -> str:
+    """
+    Gemini kabhi-kabhi JSON ko ```json ... ``` ke andar bhej deta hai.
+    Ye function us markdown ko hata deta hai.
+    """
+    raw_text = raw_text.strip()
+
+    if raw_text.startswith("```"):
+        raw_text = (
+            raw_text
+            .replace("```json", "")
+            .replace("```", "")
+            .strip()
+        )
+
+    return raw_text
 
 
 class GeminiService:
     @staticmethod
     def refine_transcript(data: dict) -> dict:
-        """
-        Step 3:
-        Takes transcript JSON from backend (AssemblyAI output)
-        Returns AI-refined JSON (title + emphasis + animation flags)
-        """
-
         prompt = f"""
 You are an AI video editor.
 
@@ -40,41 +51,28 @@ Transcript:
 {json.dumps(data)}
 """
 
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt
-        )
+        response = model.generate_content(prompt)
+        raw_text = response.text
 
-        raw_text = response.text.strip()
+        # 🔹 CLEAN MARKDOWN
+        clean_text = _clean_gemini_json(raw_text)
 
         try:
-            return json.loads(raw_text)
+            return json.loads(clean_text)
         except json.JSONDecodeError:
-            raise ValueError(
-                f"Gemini returned invalid JSON in refine_transcript:\n{raw_text}"
-            )
+            raise ValueError(f"Invalid JSON from Gemini:\n{clean_text}")
 
     @staticmethod
     def apply_chat_edit(chat_prompt: str, previous_schema: dict) -> dict:
-        """
-        Step 6:
-        Takes user chat instruction + previous schema
-        Returns updated schema using Gemini
-        """
-
         prompt = f"""
 You are an AI video editor assistant.
 
-A user wants to modify an existing video edit using natural language.
-
 Rules:
 - Modify ONLY what the user asks
-- Do NOT remove or change timestamps
+- Do NOT change timestamps
 - Do NOT change transcript text
-- Keep schema structure exactly the same
-- If user asks to remove animation, set use_animation = false
-- If user asks to increase caption size, update global_style.font_size
-- Output ONLY valid JSON (no explanation, no markdown)
+- Keep schema structure same
+- Output ONLY valid JSON
 
 User request:
 "{chat_prompt}"
@@ -83,16 +81,15 @@ Current schema:
 {json.dumps(previous_schema)}
 """
 
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt
-        )
+        response = model.generate_content(prompt)
+        raw_text = response.text
 
-        raw_text = response.text.strip()
+        # 🔹 CLEAN MARKDOWN
+        clean_text = _clean_gemini_json(raw_text)
 
         try:
-            return json.loads(raw_text)
+            return json.loads(clean_text)
         except json.JSONDecodeError:
-            raise ValueError(
-                f"Gemini returned invalid JSON in apply_chat_edit:\n{raw_text}"
-            )
+            raise ValueError(f"Invalid JSON from Gemini:\n{clean_text}")
+
+
