@@ -8,6 +8,5 @@ assemblyai
 google-generativeai
 yake
 ffmpeg-python
-
-
-
+supabase
+pydantic-settings
