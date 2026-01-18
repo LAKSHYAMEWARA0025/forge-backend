@@ -186,6 +186,101 @@ def get_config(project_id: str):
         raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
 
 
+class UpdateVideoRequest(BaseModel):
+    video_url: str
+
+
+@router.post("/update-video")
+def update_video_hack(req: UpdateVideoRequest):
+    """
+    HACK: Update video URL in existing project config
+    This simulates the initial processing without creating a new job
+    Always uses project_id: 7e0d0aa6-17b6-44cd-baef-889e52bd1088
+    """
+    
+    # Hardcoded project ID for demo
+    project_id = "7e0d0aa6-17b6-44cd-baef-889e52bd1088"
+    
+    try:
+        supabase = get_supabase()
+        
+        # Fetch current config (using 'schema' column, not 'schema_json')
+        result = supabase.table("project").select("schema, vid_id").eq(
+            "project_id", project_id
+        ).single().execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        config = result.data.get("schema")
+        vid_id = result.data.get("vid_id")
+        
+        if not config:
+            raise HTTPException(status_code=404, detail="Project has no configuration")
+        
+        # Update video URL in config
+        config["source"]["video"]["url"] = req.video_url
+        
+        # Update video table
+        if vid_id:
+            supabase.table("video").update({
+                "vid_url": req.video_url
+            }).eq("vid_id", vid_id).execute()
+        
+        # Update project config (using 'schema' column)
+        ProjectRepo.update_schema(
+            project_id=project_id,
+            new_schema=config,
+            status="ready"
+        )
+        
+        return {
+            "project_id": project_id,
+            "status": "success",
+            "message": "Video URL updated successfully",
+            "video_url": req.video_url
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+
+
+@router.get("/{project_id}/status")
+def get_status(project_id: str):
+    """
+    Get project status for polling
+    """
+    
+    # Check for invalid project_id
+    if not project_id or project_id == "undefined" or project_id == "null":
+        raise HTTPException(
+            status_code=400, 
+            detail="Invalid project_id. Please provide a valid project ID."
+        )
+    
+    try:
+        supabase = get_supabase()
+        
+        result = supabase.table("project").select("status, project_id").eq(
+            "project_id", project_id
+        ).single().execute()
+        
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        return {
+            "project_id": project_id,
+            "status": result.data.get("status", "unknown")
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal error: {str(e)}")
+
+
 def _get_edit_description(edit: dict) -> str:
     """Get human-readable description of an edit"""
     action = edit.get("action", "unknown")

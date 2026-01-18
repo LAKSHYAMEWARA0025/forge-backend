@@ -76,7 +76,7 @@ def start_ingest(req: IngestRequest, background_tasks: BackgroundTasks):
     supabase.table("project").insert({
         "project_id": project_id,
         "vid_id": vid_id,
-        "schema_json": schema_v0,
+        "schema": schema_v0,
         "status": "pending"
     }).execute()
 
