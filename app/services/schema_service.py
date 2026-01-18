@@ -7,72 +7,62 @@ class SchemaService:
     @staticmethod
     def merge_gemini_into_schema(
         base_schema: Dict[str, Any],
-        gemini_json: Dict[str, Any]
+        gemini_out: Dict[str, Any],
+        first_run: bool = True
     ) -> Dict[str, Any]:
         """
-        Gemini gives something like:
-        {
-            "title": "...",
-            "segments": [
-                { id, text, start, end, emphasis_words?, animation? }
-            ]
-        }
-
-        We convert + merge into our main schema format.
-
-        Merging rules:
-        - override only things gemini provides
-        - keep base values for missing fields
-        - keep extra old captions (Option-1 safe)
+        Final canonical Gemini → Schema merge
+        first_run = True → title override allowed
+        re-edit mode → only override if Gemini provides new title
         """
 
         new_schema = copy.deepcopy(base_schema)
 
-        # ---- Title ----
-        title_text = gemini_json.get("title")
-        if title_text:
-            if "tracks" not in new_schema:
-                new_schema["tracks"] = {}
+        # ensure nested keys
+        if "tracks" not in new_schema:
+            new_schema["tracks"] = {}
 
-            if "text" not in new_schema["tracks"]:
-                new_schema["tracks"]["text"] = {}
+        if "text" not in new_schema["tracks"]:
+            new_schema["tracks"]["text"] = {}
 
-            new_schema["tracks"]["text"]["title"] = SchemaService._make_title_block(
-                title_text,
-                base=new_schema["tracks"]["text"].get("title")
+        # -------- TITLE ----------
+        title = gemini_out.get("title")
+        if first_run:
+            if title:
+                new_schema["tracks"]["text"]["title"] = SchemaService._make_title_block(title)
+        else:
+            # re-edit logic: override only if explicitly provided
+            if title:
+                prev = new_schema["tracks"]["text"].get("title")
+                new_schema["tracks"]["text"]["title"] = SchemaService._make_title_block(title, base=prev)
+            # else keep old
+
+        # -------- SEGMENTS (Captions) ----------
+        segments = gemini_out.get("segments", [])
+        new_captions = []
+
+        for i, seg in enumerate(segments):
+            new_captions.append(
+                SchemaService._make_caption_block(seg, index=i)
             )
 
-        # ---- Captions (Segments) ----
-        gem_segments = gemini_json.get("segments", [])
-        old_captions = new_schema.get("tracks", {}).get("text", {}).get("captions", [])
-
-        merged = SchemaService._merge_segments(old_captions, gem_segments)
-        new_schema["tracks"]["text"]["captions"] = merged
+        new_schema["tracks"]["text"]["captions"] = new_captions
 
         return new_schema
 
-
+    # ---------------------------------------------------
+    # TITLE GEN
+    # ---------------------------------------------------
     @staticmethod
     def _make_title_block(text: str, base: Dict[str, Any] = None) -> Dict[str, Any]:
-        """
-        Builds title metadata with fallback to previous version.
-        """
 
-        default_title = {
+        title = {
             "id": base.get("id") if base else "title_001",
             "type": "title",
             "content": text,
             "start": base.get("start", 0) if base else 0,
             "end": base.get("end", 3) if base else 3,
-            "style": base.get("style", {
-                "fontFamily": "Inter",
-                "fontSize": 64,
-                "fontWeight": 800,
-                "color": "#ffffff",
-                "background": "rgba(0,0,0,0.45)",
-                "padding": [24, 32],
-                "borderRadius": 16
-            }) if base else {
+            "style": base.get("style") if base else {
                 "fontFamily": "Inter",
                 "fontSize": 64,
                 "fontWeight": 800,
@@ -81,99 +71,48 @@ class SchemaService:
                 "padding": [24, 32],
                 "borderRadius": 16
             },
-            "position": base.get("position", {
-                "anchor": "top_center",
-                "offsetY": 160
-            }) if base else {
+            "position": base.get("position") if base else {
                 "anchor": "top_center",
                 "offsetY": 160
             },
-            "animation": base.get("animation", {
-                "in": {"type": "slide_down_fade", "duration": 0.5},
-                "out": {"type": "fade", "duration": 0.3}
-            }) if base else {
+            "animation": base.get("animation") if base else {
                 "in": {"type": "slide_down_fade", "duration": 0.5},
                 "out": {"type": "fade", "duration": 0.3}
             }
         }
 
-        return default_title
+        return title
 
-
+    # ---------------------------------------------------
+    # CAPTION GEN
+    # ---------------------------------------------------
     @staticmethod
-    def _merge_segments(
-        old: List[Dict[str, Any]],
-        new: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """
-        Apply Gemini output onto old captions.
-        Option-1 safe behavior for extra old segments.
-        """
+    def _make_caption_block(seg: Dict[str, Any], index: int) -> Dict[str, Any]:
 
-        merged = []
+        base = SchemaService._default_caption_style()
 
-        for i, seg in enumerate(new):
-            base = old[i] if i < len(old) else SchemaService._default_caption_block(i)
-            merged.append(SchemaService._merge_segment(base, seg, i))
+        out = {
+            "id": f"caption_{index+1:03d}",
+            "type": "caption",
+            "content": seg.get("text", ""),
+            "start": seg.get("start", 0),
+            "end": seg.get("end", seg.get("start", 0) + 1),
+            "style": base["style"],
+            "position": base["position"],
+            "animation": SchemaService._resolve_animation(seg),
+        }
 
-        # Option-1: keep extra old captions not touched by Gemini
-        if len(old) > len(new):
-            for j in range(len(new), len(old)):
-                merged.append(old[j])
-
-        return merged
-
-
-    @staticmethod
-    def _merge_segment(base: Dict[str, Any], gem: Dict[str, Any], idx: int) -> Dict[str, Any]:
-        """
-        Field-level selective override.
-        """
-
-        out = copy.deepcopy(base)
-
-        # text override
-        if gem.get("text"):
-            out["content"] = gem["text"]
-
-        # timing override
-        if gem.get("start") is not None:
-            out["start"] = gem["start"]
-
-        if gem.get("end") is not None:
-            out["end"] = gem["end"]
-
-        # emphasis (future use)
-        if gem.get("emphasis_words"):
-            out["emphasis_words"] = gem["emphasis_words"]
-
-        # animation override (deep merge)
-        if "animation" in gem:
-            out["animation"] = {**base.get("animation", {}), **gem["animation"]}
-
-        # style override (deep merge)
-        if "style" in gem:
-            out["style"] = {**base.get("style", {}), **gem["style"]}
-
-        # effects override (deep merge)
-        if "effects" in gem:
-            out["effects"] = {**base.get("effects", {}), **gem["effects"]}
+        if seg.get("emphasis_words"):
+            out["emphasis_words"] = seg["emphasis_words"]
 
         return out
 
-
+    # ---------------------------------------------------
+    # DEFAULTS
+    # ---------------------------------------------------
     @staticmethod
-    def _default_caption_block(i: int) -> Dict[str, Any]:
-        """
-        For new Gemini segments when old does not exist.
-        """
-
+    def _default_caption_style():
         return {
-            "id": f"caption_{i}",
-            "type": "caption",
-            "content": "",
-            "start": 0,
-            "end": 1,
             "style": {
                 "fontFamily": "Inter",
                 "fontSize": 48,
@@ -186,9 +125,19 @@ class SchemaService:
             "position": {
                 "anchor": "bottom_center",
                 "offsetY": -120
-            },
-            "animation": {
-                "in": {"type": "slide_up_fade", "duration": 0.4},
-                "out": {"type": "fade", "duration": 0.3}
             }
+        }
+
+    # ---------------------------------------------------
+    # ANIMATION LOGIC
+    # ---------------------------------------------------
+    @staticmethod
+    def _resolve_animation(seg: dict) -> dict:
+        if "animation" in seg:
+            return seg["animation"]
+
+        # default fallback
+        return {
+            "in": {"type": "slide_up_fade", "duration": 0.4},
+            "out": {"type": "fade", "duration": 0.3}
         }

@@ -1,43 +1,15 @@
+# app/services/assembly_service.py
+
 import assemblyai as aai
 from app.config import settings
 from app.db.supabase import get_supabase
-from app.services.schema_service import apply_gemini_to_schema
-
+from app.services.schema_service import merge_gemini_into_schema
+from app.services.gemini_service import GeminiService   # teammate module
 
 class AssemblyService:
 
     @staticmethod
-    def parse_transcript(raw: dict):
-        """
-        Converts AssemblyAI format → our simplified segment structure for Gemini
-        """
-        sentiments = raw.get("sentiment_analysis_results", [])
-        duration = raw.get("audio_duration", 0)
-
-        segments = []
-
-        for s in sentiments:
-            segments.append({
-                "text": s["text"],
-                "start": round(s["start"] / 1000, 2),
-                "end": round(s["end"] / 1000, 2),
-                "sentiment": s["sentiment"]
-            })
-
-        parsed = {
-            "segments": segments,
-            "duration": duration
-        }
-
-        return parsed
-
-
-    @staticmethod
     def transcribe_and_parse(video_url: str) -> dict:
-        """
-        Fetch raw transcript from AssemblyAI + convert to simplified format
-        """
-        # Configure API
         aai.settings.api_key = settings.ASSEMBLYAI_API_KEY
 
         config = aai.TranscriptionConfig(
@@ -48,28 +20,52 @@ class AssemblyService:
 
         transcriber = aai.Transcriber()
         transcript = transcriber.transcribe(video_url, config=config)
-
         raw = transcript.json_response
 
-        # Parse directly from raw
-        return AssemblyService.parse_transcript(raw)
-    
+        # convert Assembly→Segments
+        parsed_segments = []
+        for s in raw.get("sentiment_analysis_results", []):
+            parsed_segments.append({
+                "text": s["text"],
+                "start": round(s["start"] / 1000, 2),
+                "end": round(s["end"] / 1000, 2),
+                "sentiment": s["sentiment"]
+            })
 
-    @staticmethod
-    def start_transcription(project_id: str, video_url: str):
-        supabase = get_supabase()
+        return {
+            "segments": parsed_segments,
+            "duration": raw.get("audio_duration", None)
+        }
 
-        # Step 1: AssemblyAI → parsed
+
+def start_transcription(project_id: str, video_url: str):
+    supabase = get_supabase()
+
+    # update: pending→working_transcript
+    supabase.table("project").update({
+        "status": "working_transcript"
+    }).eq("project_id", project_id).execute()
+
+    try:
         parsed = AssemblyService.transcribe_and_parse(video_url)
 
-        # Step 2: Store parsed in DB as intermediate
+        # now call Gemini
         supabase.table("project").update({
-            "intermediate_transcript": parsed,   # optional column for debugging
-            "status": "transcribed"
+            "status": "working_gemini"
         }).eq("project_id", project_id).execute()
 
-        # Step 3: return parsed so another service can handoff
-        return parsed
+        gemini_out = GeminiService.generate_from_transcript(parsed)
 
+        # merge with stored schema_v0
+        merge_gemini_into_schema(project_id, gemini_out)
 
-# now we need to return or call this to netram's function
+        # mark ready
+        supabase.table("project").update({
+            "status": "ready"
+        }).eq("project_id", project_id).execute()
+
+    except Exception as e:
+        supabase.table("project").update({
+            "status": "failed",
+            "error": str(e)
+        }).eq("project_id", project_id).execute()
