@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Dict, Any
 
 from app.db.supabase import get_supabase
-from app.services.assembly_service import start_transcription  # JUST start, no polling
+# from app.services.assembly_service import start_transcription  # TODO: Implement in Flow 1
 
 router = APIRouter()
 
@@ -80,7 +80,7 @@ def start_ingest(req: IngestRequest, background_tasks: BackgroundTasks):
         "status": "pending"
     }).execute()
 
-    # 4. Start transcription async
-    background_tasks.add_task(start_transcription, project_id, req.video_url)
+    # 4. Start transcription async (TODO: Implement in Flow 1)
+    # background_tasks.add_task(start_transcription, project_id, req.video_url)
 
     return {"project_id": project_id, "status": "pending"}

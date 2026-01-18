@@ -7,7 +7,7 @@ class ProjectRepo:
         supabase = get_supabase()
 
         resp = supabase.table("project").update({
-            "schema_json": new_schema,
+            "schema": new_schema,
             "status": status
         }).eq("project_id", project_id).execute()
 
