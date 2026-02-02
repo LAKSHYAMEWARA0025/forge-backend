@@ -1,17 +1,17 @@
-from fastapi import APIRouter, BackgroundTasks
+# ingest_routes.py
+
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 import uuid
 from datetime import datetime
-from typing import Dict, Any
-
 from app.db.supabase import get_supabase
-# from app.services.assembly_service import start_transcription  # TODO: Implement in Flow 1
+from app.pipeline.upstream import pipeline_transcription_to_gemini
 
 router = APIRouter()
 
 class IngestRequest(BaseModel):
     video_url: str
-    metadata: Dict[str, Any]
+    metadata: dict
 
 @router.post("/start")
 def start_ingest(req: IngestRequest, background_tasks: BackgroundTasks):
@@ -20,16 +20,16 @@ def start_ingest(req: IngestRequest, background_tasks: BackgroundTasks):
     vid_id = str(uuid.uuid4())
     project_id = str(uuid.uuid4())
 
-    # 1. video insert
+    # insert video
     supabase.table("video").insert({
         "vid_id": vid_id,
         "vid_url": req.video_url,
         "metadata": req.metadata
     }).execute()
 
-    # 2. create initial schema
+    # build initial schema_v0
     now = datetime.utcnow().isoformat() + "Z"
-    duration = req.metadata.get("duration", 0)
+    dur = req.metadata.get("duration", 0)
 
     schema_v0 = {
         "id": project_id,
@@ -37,7 +37,7 @@ def start_ingest(req: IngestRequest, background_tasks: BackgroundTasks):
             "schemaVersion": "1.0",
             "projectId": project_id,
             "createdAt": now,
-            "duration": duration,
+            "duration": dur,
             "timeUnit": "seconds"
         },
         "source": {
@@ -47,17 +47,11 @@ def start_ingest(req: IngestRequest, background_tasks: BackgroundTasks):
                 "width": req.metadata.get("width"),
                 "height": req.metadata.get("height"),
                 "aspectRatio": req.metadata.get("aspectRatio"),
-                "duration": duration
+                "duration": dur
             }
         },
-        "timeline": {"start": 0, "end": duration},
-        "tracks": {
-            "video": {},
-            "text": {"captions": [], "title": None},
-            "audio": []
-        },
-        "effects": {},
-        "transcript": {"words": []},
+        "timeline": {"start": 0, "end": dur},
+        "tracks": {"text": {"captions": [], "title": None}},
         "settings": {
             "autoCaptions": True,
             "dynamicAnimations": True,
@@ -72,7 +66,7 @@ def start_ingest(req: IngestRequest, background_tasks: BackgroundTasks):
         }
     }
 
-    # 3. create project row
+    # insert project
     supabase.table("project").insert({
         "project_id": project_id,
         "vid_id": vid_id,
@@ -80,7 +74,11 @@ def start_ingest(req: IngestRequest, background_tasks: BackgroundTasks):
         "status": "pending"
     }).execute()
 
-    # 4. Start transcription async (TODO: Implement in Flow 1)
-    # background_tasks.add_task(start_transcription, project_id, req.video_url)
+    # async pipeline call
+    background_tasks.add_task(
+        pipeline_transcription_to_gemini,
+        project_id,
+        req.video_url
+    )
 
     return {"project_id": project_id, "status": "pending"}
