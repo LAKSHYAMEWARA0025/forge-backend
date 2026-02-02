@@ -10,3 +10,5 @@ yake
 ffmpeg-python
 supabase
 pydantic-settings
+cloudinary
+
